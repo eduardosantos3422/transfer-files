@@ -1,137 +1,102 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: RDS MySQL instance like screenshot (awsconnectmetrics)
+Description: "PROD: RDS MySQL awsconnectmetrics (defaults below are DEV so PROD team can replace)"
 
 Parameters:
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-    Description: VPC for the RDS instance
-
-  DbSubnetIds:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: At least 2 subnets in different AZs (typically private subnets)
-
-  AllowedMysqlCidr:
+  DBInstanceIdentifier:
     Type: String
-    Default: "10.0.0.0/16"
-    Description: CIDR allowed to connect to MySQL (3306). Change to your network.
+    Default: awsconnectmetrics
 
   MasterUsername:
     Type: String
     Default: admin
-    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]*$"
-    MinLength: 1
-    MaxLength: 16
 
   MasterUserPassword:
     Type: String
     NoEcho: true
-    MinLength: 8
-    MaxLength: 41
+    Description: "Set the admin password (or switch to Secrets Manager)."
+
+  # ====== PROD TEAM MUST CHANGE THESE ======
+  VpcId:
+    Type: String
+    Default: vpc-03efbbf8f2b6321b6
+    Description: "DEV value shown. CHANGE to PROD VPC Id."
+
+  SubnetIds:
+    Type: List<String>
+    Default: "subnet-08c5ab36af24a02c4,subnet-03b0db226a6b85e69"
+    Description: "DEV subnets shown. CHANGE to PROD private subnets (2+ AZs)."
+
+  # If PROD already has a subnet group, you can pass its name and skip creation.
+  ExistingDBSubnetGroupName:
+    Type: String
+    Default: rds-cluster-subnet-group-1
+    Description: "DEV subnet group name shown. CHANGE to PROD subnet group name, or leave blank to create one."
+  
+  VpcSecurityGroupIds:
+    Type: List<String>
+    Default: "sg-0ea52763d77b672ea,sg-02e46d4b0de1ba909"
+    Description: "DEV SGs shown. CHANGE to PROD SG ids (e.g., default + rds-lambda-3 equivalent)."
+
+Conditions:
+  UseExistingSubnetGroup: !Not [!Equals [!Ref ExistingDBSubnetGroupName, ""]]
 
 Resources:
-  DbSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow MySQL access to RDS
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: !Ref AllowedMysqlCidr
-
-  DbSubnetGroup:
+  # Create a subnet group only if user does NOT provide an existing name
+  DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
+    Condition: !Not [UseExistingSubnetGroup]
     Properties:
-      DBSubnetGroupDescription: Subnet group for RDS
-      SubnetIds: !Ref DbSubnetIds
+      DBSubnetGroupDescription: !Sub "Subnet group for ${DBInstanceIdentifier}"
+      SubnetIds: !Ref SubnetIds
 
-  RdsEnhancedMonitoringRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "rds-monitoring-role-${AWS::StackName}"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: monitoring.rds.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
-
-  # Using a custom parameter group so slow query logging is actually enabled,
-  # while still exporting slowquery to CloudWatch.
-  DbParameterGroup:
-    Type: AWS::RDS::DBParameterGroup
-    Properties:
-      Description: MySQL 8.0 parameter group (enable slow query log)
-      Family: mysql8.0
-      Parameters:
-        slow_query_log: "1"
-        long_query_time: "1"
-        log_output: "FILE"
-
-  AwsConnectMetricsDb:
+  AwsConnectMetricsDB:
     Type: AWS::RDS::DBInstance
     Properties:
-      DBInstanceIdentifier: awsconnectmetrics
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
 
       Engine: mysql
       EngineVersion: "8.0.43"
       DBInstanceClass: db.m7g.large
+      LicenseModel: general-public-license
 
       MasterUsername: !Ref MasterUsername
       MasterUserPassword: !Ref MasterUserPassword
 
-      DBSubnetGroupName: !Ref DbSubnetGroup
-      VPCSecurityGroups:
-        - !GetAtt DbSecurityGroup.GroupId
+      # Networking (DEV defaults are in the Parameters above; PROD swaps them)
+      DBSubnetGroupName: !If
+        - UseExistingSubnetGroup
+        - !Ref ExistingDBSubnetGroupName
+        - !Ref DBSubnetGroup
 
-      # Storage (gp3) to match screenshot
+      VPCSecurityGroups: !Ref VpcSecurityGroupIds
+      PubliclyAccessible: false
+      Port: 3306
+      NetworkType: IPV4
+
+      # Storage (matches your instance)
       StorageType: gp3
       AllocatedStorage: 200
+      MaxAllocatedStorage: 1000
       Iops: 3000
       StorageThroughput: 125
-      MaxAllocatedStorage: 1000
-
-      # Encryption (uses AWS managed key aws/rds by default)
       StorageEncrypted: true
 
-      # Availability
-      MultiAZ: false
-
-      # Monitoring
-      MonitoringInterval: 60
-      MonitoringRoleArn: !GetAtt RdsEnhancedMonitoringRole.Arn
-
-      # Performance Insights
+      # Monitoring & logs (matches your instance)
       EnablePerformanceInsights: true
       PerformanceInsightsRetentionPeriod: 7
-
-      # Logs -> CloudWatch
+      MonitoringInterval: 60
       EnableCloudwatchLogsExports:
         - slowquery
 
-      # Parameter group (enables slow query logging)
-      DBParameterGroupName: !Ref DbParameterGroup
-
       # Matches screenshot
+      MultiAZ: false
       DeletionProtection: false
-      PubliclyAccessible: false
+      CopyTagsToSnapshot: true
 
 Outputs:
-  DbEndpointAddress:
-    Description: RDS endpoint address
-    Value: !GetAtt AwsConnectMetricsDb.Endpoint.Address
-
-  DbEndpointPort:
-    Description: RDS endpoint port
-    Value: !GetAtt AwsConnectMetricsDb.Endpoint.Port
-
-  DbSecurityGroupId:
-    Description: Security Group attached to RDS
-    Value: !GetAtt DbSecurityGroup.GroupId
-
-
-
+  DbEndpoint:
+    Value: !GetAtt AwsConnectMetricsDB.Endpoint.Address
+  DbPort:
+    Value: !GetAtt AwsConnectMetricsDB.Endpoint.Port
+  DbInstanceArn:
+    Value: !GetAtt AwsConnectMetricsDB.DBInstanceArn
