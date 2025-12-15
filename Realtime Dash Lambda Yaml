@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lambda created from a provided ZIP (S3) - connect-reltime-dash style"
+
+Parameters:
+  FunctionName:
+    Type: String
+    Default: connect-reltime-dash
+    Description: Lambda function name
+
+  CodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing the Lambda zip
+
+  CodeS3Key:
+    Type: String
+    Description: S3 key (path) to the Lambda zip (e.g. releases/function.zip)
+
+  Runtime:
+    Type: String
+    Default: nodejs22.x
+    AllowedValues:
+      - nodejs18.x
+      - nodejs20.x
+      - nodejs22.x
+    Description: Lambda runtime
+
+  Handler:
+    Type: String
+    Default: index.handler
+    Description: Handler (e.g. index.handler). Update if your zip uses something else.
+
+  MemorySize:
+    Type: Number
+    Default: 512
+    MinValue: 128
+    MaxValue: 10240
+    Description: Memory (MB)
+
+  Timeout:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 900
+    Description: Timeout (seconds)
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1,3,5,7,14,30,60,90,120,150,180,365,400,545,731,1827,3653]
+    Description: CloudWatch Logs retention
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${FunctionName}-role-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Basic CloudWatch Logs permissions
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: !Sub "${FunctionName}-inline"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # OPTIONAL: Add permissions your code needs (examples below)
+              # - Effect: Allow
+              #   Action:
+              #     - rds-db:connect
+              #   Resource: "*"
+              #
+              # - Effect: Allow
+              #   Action:
+              #     - secretsmanager:GetSecretValue
+              #   Resource: "arn:aws:secretsmanager:REGION:ACCOUNT:secret:NAME*"
+              - Effect: Allow
+                Action: []
+                Resource: "*"
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      Runtime: !Ref Runtime
+      Handler: !Ref Handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+
+      MemorySize: !Ref MemorySize
+      Timeout: !Ref Timeout
+      Architectures:
+        - x86_64
+
+      Environment:
+        Variables:
+          # Add your env vars here (examples)
+          # DB_HOST: "example.cluster-xyz.us-west-2.rds.amazonaws.com"
+          # DB_USER: "admin"
+          # DB_NAME: "awsconnectmetrics"
+          # AWS_REGION: !Ref "AWS::Region"
+          APP_NAME: !Ref FunctionName
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${FunctionName}"
+      RetentionInDays: !Ref LogRetentionDays
+
+Outputs:
+  LambdaName:
+    Value: !Ref LambdaFunction
+
+  LambdaArn:
+    Value: !GetAtt LambdaFunction.Arn
