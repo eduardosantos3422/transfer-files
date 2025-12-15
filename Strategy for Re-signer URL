@@ -1,0 +1,125 @@
+Goal
+
+Keep the recording in S3 for 30+ days, but only ever email a “get fresh link” URL. When the user clicks it, you generate a new 7-day presigned URL on demand using your existing presigner Lambda.
+
+1) Keep the S3 object for 30 days
+
+Make sure the voicemail recording object isn’t deleted before 30 days (S3 lifecycle rule / VMX3 retention setting). Re-signing only works if the object still exists.
+
+2) Create a “Re-sign” endpoint (API Gateway or Lambda URL)
+
+You need a public HTTPS endpoint that recipients can click.
+
+Option A (fast): Lambda Function URL
+
+Create a new Lambda (or reuse the existing presigner with a small wrapper)
+
+Enable Function URL
+
+Add auth (recommended: signed token, see step 4)
+
+Option B (standard): API Gateway
+
+Create a GET endpoint /vmx3/resign
+
+Integrate to Lambda
+
+Easier to add WAF/throttling/custom domain
+
+3) Change the email to include a “Re-sign link” instead of the presigned S3 URL
+
+Instead of putting presigned_url directly in the email, put something like:
+
+https://YOUR_DOMAIN/vmx3/resign?b=<bucket>&k=<key>&t=<token>
+
+
+Where:
+
+b = recording bucket
+
+k = recording key
+
+t = short signed token so people can’t guess keys and mint links
+
+(Do not expose raw bucket/key without a token.)
+
+4) Secure it with a signed token (important)
+
+You need to prevent anyone from generating presigned URLs for arbitrary objects.
+
+Simple, solid approach (recommended):
+
+When creating the email, also create a token:
+
+payload = {bucket, key, exp=now+30days, contactId}
+
+token = base64url(payload) + "." + HMAC_SHA256(payload, SECRET)
+
+Put token in the email URL.
+
+Re-sign endpoint verifies token signature + checks exp has not passed.
+
+Only then it calls the presigner lambda to mint a fresh 7-day presigned URL.
+
+Store SECRET in Secrets Manager.
+
+5) Re-sign endpoint flow
+
+When user clicks link:
+
+Endpoint receives t (token) (or b/k + token)
+
+Validate token (signature + not expired + optional contactId match)
+
+Call your existing presigner Lambda with:
+
+{
+  "vmx3_mode": "email",
+  "recording_bucket": "...",
+  "recording_key": "..."
+}
+
+
+Get back presigned_url
+
+Redirect user (HTTP 302) to that presigned_url
+
+That way the user ends up downloading from S3, but you never email a long-lived link.
+
+6) What changes in VMX3 code?
+
+You’ll change the component that builds the email body.
+
+Right now it likely:
+
+calls your presigner lambda
+
+gets presigned_url
+
+injects it into the email
+
+You will instead:
+
+generate/store/compute the token
+
+inject the re-sign endpoint URL into the email
+
+(optionally) do not call presigner during initial email send at all
+
+Quick checklist (what I need from you to be exact)
+
+Paste ONE of these and I’ll tell you exactly where to edit:
+
+the VMX3 Lambda that sends the email (the one that currently calls this presigner), or
+
+the CloudFormation/SAM snippet that defines “email sending” lambda(s), or
+
+just the function names in the stack (I’ll tell you which is email builder vs presigner)
+
+And tell me which endpoint you prefer:
+
+Lambda URL (fastest)
+
+API Gateway (more enterprise / controls)
+
+Once you paste the email-sender code, I’ll give you the exact code diff: token creation + redirect Lambda handler + updated email template.
