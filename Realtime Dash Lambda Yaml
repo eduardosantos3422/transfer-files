@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: "2010-09-09   "
+AWSTemplateFormatVersion: "2010-09-09"
 Description: "Lambda (ZIP from S3) + IAM (Connect + Secrets) + VPC access to RDS + EventBridge Scheduler schedules (Hawaii time + every minute)"
 
 Parameters:
