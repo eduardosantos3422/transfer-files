@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>QuickSight Auto-Refresh</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    iframe { width: 100%; height: 100%; border: 0; }
+    .bar {
+      position: fixed; top: 0; left: 0; right: 0;
+      padding: 6px 10px; font: 12px/1.2 Arial, sans-serif;
+      background: rgba(0,0,0,0.6); color: #fff; z-index: 9999;
+    }
+    .wrap { height: 100%; padding-top: 28px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    QuickSight auto-refresh: <span id="status">starting…</span>
+  </div>
+
+  <div class="wrap">
+    <iframe id="qs" allowfullscreen></iframe>
+  </div>
+
+  <script>
+    // ✅ Use a QuickSight *EMBED* URL here (not the console URL).
+    const BASE_URL = "DASHBOARD_EMBED_URL";
+
+    // 20 seconds
+    const REFRESH_MS = 20000;
+
+    const iframe = document.getElementById("qs");
+    const statusEl = document.getElementById("status");
+
+    function loadDashboard() {
+      const cacheBuster = "cb=" + Date.now();
+      const url = BASE_URL + (BASE_URL.includes("?") ? "&" : "?") + cacheBuster;
+      iframe.src = url;
+
+      const next = new Date(Date.now() + REFRESH_MS);
+      statusEl.textContent = `loaded @ ${new Date().toLocaleTimeString()} | next reload @ ${next.toLocaleTimeString()}`;
+    }
+
+    loadDashboard();
+    setInterval(loadDashboard, REFRESH_MS);
+  </script>
+</body>
+</html>
