@@ -1,5 +1,4 @@
 
-Requires env var CONNECT_INSTANCE_ID (your AWS Connect instance id)
 
 
 In your Invoke AWS Lambda function block, set Parameters like:
@@ -19,5 +18,85 @@ setMtgTrue → set mtg = true
 setMtgFalse → set mtg = false
 
 returnValues → just read and return the row as flat JSON
+
+{
+  "Details": {
+    "Parameters": {
+      "DeptID": "5121",
+      "function": "returnValues"
+    },
+    "ContactData": {
+      "Attributes": {}
+    }
+  }
+}
+
+
+{
+  "Details": {
+    "Parameters": {
+      "DeptID": "5121",
+      "function": "setMotdTrue"
+    },
+    "ContactData": {
+      "Attributes": {}
+    }
+  }
+}
+
+
+{
+  "Details": {
+    "Parameters": {
+      "DeptID": "5121",
+      "function": "setMotdFalse"
+    },
+    "ContactData": {
+      "Attributes": {}
+    }
+  }
+}
+
+
+{
+  "Details": {
+    "Parameters": {
+      "DeptID": "5121",
+      "function": "setMtgTrue"
+    },
+    "ContactData": {
+      "Attributes": {}
+    }
+  }
+}
+
+
+{
+  "Details": {
+    "Parameters": {
+      "DeptID": "5121",
+      "function": "setMtgFalse"
+    },
+    "ContactData": {
+      "Attributes": {}
+    }
+  }
+}
+
+
+{
+  "Details": {
+    "Parameters": {
+      "DeptID": "999999",
+      "function": "returnValues"
+    },
+    "ContactData": {
+      "Attributes": {}
+    }
+  }
+}
+
+
+
 
 
