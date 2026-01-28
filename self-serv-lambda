@@ -1,0 +1,195 @@
+"use strict";
+
+/**
+ * AWS Lambda (CommonJS) - DynamoDB toggle + read
+ *
+ * Env vars:
+ *   CONNECT_INSTANCE_ID  (required)
+ *   TABLE_NAME           (optional, default: hmsa-connect-selfsvc)
+ *
+ * Input:
+ *   {
+ *     "DeptID": 5121,
+ *     "function": "setMotdTrue" | "setMotdFalse" | "setMtgTrue" | "setMtgFalse" | "returnValues"
+ *   }
+ *
+ * Behavior:
+ *  - If item for DeptID does NOT exist => return ok:false error (for BOTH reads and updates)
+ *  - returnValues => returns flat json with values in table (DeptID, PIN, LastModified, motd, mtg)
+ */
+
+const {
+  DynamoDBClient,
+  GetItemCommand,
+  UpdateItemCommand,
+} = require("@aws-sdk/client-dynamodb");
+
+const TABLE_NAME = process.env.TABLE_NAME || "hmsa-connect-selfsvc";
+const ddb = new DynamoDBClient({});
+
+function mustGetEnv(name) {
+  const v = process.env[name];
+  if (!v || !String(v).trim()) {
+    throw new Error(`Missing required env var: ${name}`);
+  }
+  return v.trim();
+}
+
+function parseDeptId(raw) {
+  if (raw === undefined || raw === null) throw new Error("DeptID is required");
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("DeptID must be a positive number");
+  return String(Math.trunc(n)); // DynamoDB N is a string
+}
+
+function flattenDdbItem(item) {
+  if (!item) return null;
+
+  const out = {};
+  if (item.DeptID?.N != null) out.DeptID = Number(item.DeptID.N);
+  if (item.PIN?.N != null) out.PIN = Number(item.PIN.N);
+  if (item.LastModified?.S != null) out.LastModified = item.LastModified.S;
+
+  if (item.motd?.BOOL != null) out.motd = item.motd.BOOL;
+  if (item.mtg?.BOOL != null) out.mtg = item.mtg.BOOL;
+
+  return out;
+}
+
+async function getValues({ deptIdN }) {
+  const resp = await ddb.send(
+    new GetItemCommand({
+      TableName: TABLE_NAME,
+      Key: { DeptID: { N: deptIdN } },
+      ConsistentRead: true,
+    })
+  );
+
+  if (!resp.Item) {
+    const deptNum = Number(deptIdN);
+    const err = new Error(`No item found for DeptID=${deptNum}`);
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+
+  return flattenDdbItem(resp.Item);
+}
+
+async function setFlag({ deptIdN, flagName, flagValue }) {
+  const nowIso = new Date().toISOString();
+
+  try {
+    const resp = await ddb.send(
+      new UpdateItemCommand({
+        TableName: TABLE_NAME,
+        Key: { DeptID: { N: deptIdN } },
+
+        // IMPORTANT: do NOT create new items; require existing key
+        ConditionExpression: "attribute_exists(DeptID)",
+
+        UpdateExpression: "SET #flag = :v, #lm = :lm",
+        ExpressionAttributeNames: {
+          "#flag": flagName,
+          "#lm": "LastModified",
+        },
+        ExpressionAttributeValues: {
+          ":v": { BOOL: !!flagValue },
+          ":lm": { S: nowIso },
+        },
+        ReturnValues: "ALL_NEW",
+      })
+    );
+
+    return flattenDdbItem(resp.Attributes);
+  } catch (e) {
+    // If it doesn't exist, DynamoDB throws ConditionalCheckFailedException
+    if (e && (e.name === "ConditionalCheckFailedException" || e.Code === "ConditionalCheckFailedException")) {
+      const deptNum = Number(deptIdN);
+      const err = new Error(`No item found for DeptID=${deptNum}`);
+      err.code = "NOT_FOUND";
+      throw err;
+    }
+    throw e;
+  }
+}
+
+exports.handler = async (event) => {
+  const instanceId = mustGetEnv("CONNECT_INSTANCE_ID");
+
+  try {
+    const deptIdN = parseDeptId(event?.DeptID);
+    const fn = String(event?.function || "").trim();
+
+    if (!fn) throw new Error("function is required");
+
+    const allowed = new Set([
+      "setMotdTrue",
+      "setMotdFalse",
+      "setMtgTrue",
+      "setMtgFalse",
+      "returnValues",
+    ]);
+
+    if (!allowed.has(fn)) {
+      throw new Error(
+        `Invalid function '${fn}'. Allowed: ${Array.from(allowed).join(", ")}`
+      );
+    }
+
+    let values;
+
+    switch (fn) {
+      case "returnValues":
+        values = await getValues({ deptIdN });
+        return {
+          ok: true,
+          instanceId,
+          tableName: TABLE_NAME,
+          ...values, // flat json
+        };
+
+      case "setMotdTrue":
+        values = await setFlag({ deptIdN, flagName: "motd", flagValue: true });
+        break;
+      case "setMotdFalse":
+        values = await setFlag({ deptIdN, flagName: "motd", flagValue: false });
+        break;
+      case "setMtgTrue":
+        values = await setFlag({ deptIdN, flagName: "mtg", flagValue: true });
+        break;
+      case "setMtgFalse":
+        values = await setFlag({ deptIdN, flagName: "mtg", flagValue: false });
+        break;
+
+      default:
+        throw new Error("Unhandled function");
+    }
+
+    return {
+      ok: true,
+      instanceId,
+      tableName: TABLE_NAME,
+      ...values, // flat json
+    };
+  } catch (err) {
+    const errMsg = err?.message || "Unknown error";
+    const errCode = err?.code || err?.name || "ERROR";
+
+    console.error("ERROR", {
+      msg: errMsg,
+      code: errCode,
+      stack: err?.stack,
+      event,
+      tableName: TABLE_NAME,
+      instanceId,
+    });
+
+    return {
+      ok: false,
+      instanceId,
+      tableName: TABLE_NAME,
+      error: errMsg,
+      code: errCode,
+    };
+  }
+};
