@@ -1,20 +1,23 @@
 "use strict";
 
 /**
- * AWS Lambda (CommonJS) - DynamoDB toggle + read
+ * AWS Lambda (CommonJS) - DynamoDB toggle + read (invoked from Amazon Connect contact flow)
  *
  * Env vars:
- *   CONNECT_INSTANCE_ID  (required)
- *   TABLE_NAME           (optional, default: hmsa-connect-selfsvc)
+ *   TABLE_NAME  (optional, default: hmsa-connect-selfsvc)
  *
- * Input:
- *   {
- *     "DeptID": 5121,
- *     "function": "setMotdTrue" | "setMotdFalse" | "setMtgTrue" | "setMtgFalse" | "returnValues"
- *   }
+ * Expected input (Connect):
+ *   event.Details.Parameters.DeptID
+ *   event.Details.Parameters.function
+ * OR
+ *   event.Details.ContactData.Attributes.DeptID
+ *   event.Details.ContactData.Attributes.function
+ *
+ * Function values:
+ *   setMotdTrue | setMotdFalse | setMtgTrue | setMtgFalse | returnValues
  *
  * Behavior:
- *  - If item for DeptID does NOT exist => return ok:false error (for BOTH reads and updates)
+ *  - If item for DeptID does NOT exist => ok:false error (for BOTH reads and updates)
  *  - returnValues => returns flat json with values in table (DeptID, PIN, LastModified, motd, mtg)
  */
 
@@ -26,14 +29,6 @@ const {
 
 const TABLE_NAME = process.env.TABLE_NAME || "hmsa-connect-selfsvc";
 const ddb = new DynamoDBClient({});
-
-function mustGetEnv(name) {
-  const v = process.env[name];
-  if (!v || !String(v).trim()) {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return v.trim();
-}
 
 function parseDeptId(raw) {
   if (raw === undefined || raw === null) throw new Error("DeptID is required");
@@ -54,6 +49,18 @@ function flattenDdbItem(item) {
   if (item.mtg?.BOOL != null) out.mtg = item.mtg.BOOL;
 
   return out;
+}
+
+function getConnectParams(event) {
+  const details = event?.Details || {};
+  const params = details?.Parameters || {};
+  const attrs = details?.ContactData?.Attributes || {};
+
+  // Prefer Lambda block Parameters, then Contact Attributes, then top-level (for testing)
+  const DeptID = params.DeptID ?? attrs.DeptID ?? event?.DeptID;
+  const fn = params.function ?? attrs.function ?? event?.function;
+
+  return { DeptID, fn };
 }
 
 async function getValues({ deptIdN }) {
@@ -84,7 +91,7 @@ async function setFlag({ deptIdN, flagName, flagValue }) {
         TableName: TABLE_NAME,
         Key: { DeptID: { N: deptIdN } },
 
-        // IMPORTANT: do NOT create new items; require existing key
+        // Do NOT create new items; require existing key
         ConditionExpression: "attribute_exists(DeptID)",
 
         UpdateExpression: "SET #flag = :v, #lm = :lm",
@@ -102,7 +109,6 @@ async function setFlag({ deptIdN, flagName, flagValue }) {
 
     return flattenDdbItem(resp.Attributes);
   } catch (e) {
-    // If it doesn't exist, DynamoDB throws ConditionalCheckFailedException
     if (e && (e.name === "ConditionalCheckFailedException" || e.Code === "ConditionalCheckFailedException")) {
       const deptNum = Number(deptIdN);
       const err = new Error(`No item found for DeptID=${deptNum}`);
@@ -114,13 +120,14 @@ async function setFlag({ deptIdN, flagName, flagValue }) {
 }
 
 exports.handler = async (event) => {
-  const instanceId = mustGetEnv("CONNECT_INSTANCE_ID");
-
   try {
-    const deptIdN = parseDeptId(event?.DeptID);
-    const fn = String(event?.function || "").trim();
+    console.log("Incoming event:", JSON.stringify(event, null, 2));
 
-    if (!fn) throw new Error("function is required");
+    const { DeptID, fn } = getConnectParams(event);
+
+    const deptIdN = parseDeptId(DeptID);
+    const functionName = String(fn || "").trim();
+    if (!functionName) throw new Error("function is required");
 
     const allowed = new Set([
       "setMotdTrue",
@@ -130,22 +137,21 @@ exports.handler = async (event) => {
       "returnValues",
     ]);
 
-    if (!allowed.has(fn)) {
+    if (!allowed.has(functionName)) {
       throw new Error(
-        `Invalid function '${fn}'. Allowed: ${Array.from(allowed).join(", ")}`
+        `Invalid function '${functionName}'. Allowed: ${Array.from(allowed).join(", ")}`
       );
     }
 
     let values;
 
-    switch (fn) {
+    switch (functionName) {
       case "returnValues":
         values = await getValues({ deptIdN });
         return {
           ok: true,
-          instanceId,
           tableName: TABLE_NAME,
-          ...values, // flat json
+          ...values,
         };
 
       case "setMotdTrue":
@@ -167,9 +173,8 @@ exports.handler = async (event) => {
 
     return {
       ok: true,
-      instanceId,
       tableName: TABLE_NAME,
-      ...values, // flat json
+      ...values,
     };
   } catch (err) {
     const errMsg = err?.message || "Unknown error";
@@ -179,14 +184,11 @@ exports.handler = async (event) => {
       msg: errMsg,
       code: errCode,
       stack: err?.stack,
-      event,
       tableName: TABLE_NAME,
-      instanceId,
     });
 
     return {
       ok: false,
-      instanceId,
       tableName: TABLE_NAME,
       error: errMsg,
       code: errCode,
