@@ -1,0 +1,19 @@
+In your Invoke AWS Lambda function block, set Parameters like:
+
+DeptID = 5121 (or a flow attribute)
+
+function = returnValues (or setMotdTrue, etc.)
+
+
+
+setMotdTrue → set motd = true
+
+setMotdFalse → set motd = false
+
+setMtgTrue → set mtg = true
+
+setMtgFalse → set mtg = false
+
+returnValues → just read and return the row as flat JSON
+
+
