@@ -1,3 +1,7 @@
+
+Requires env var CONNECT_INSTANCE_ID (your AWS Connect instance id)
+
+
 In your Invoke AWS Lambda function block, set Parameters like:
 
 DeptID = 5121 (or a flow attribute)
