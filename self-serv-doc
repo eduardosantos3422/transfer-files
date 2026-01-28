@@ -1,4 +1,6 @@
+Lambda :   self-serv-motd-mtg   
 
+Lambda is used to set MOTD or MTG to true or false on an DeptID and dump data showing PIN and values.
 
 
 In your Invoke AWS Lambda function block, set Parameters like:
